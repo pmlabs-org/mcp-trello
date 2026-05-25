@@ -42,12 +42,17 @@ vi.mock('fs/promises', () => ({
   access: vi.fn(async () => {}),
 }));
 
-function createClient(overrides?: { boardId?: string; defaultBoardId?: string }) {
+function createClient(overrides?: {
+  boardId?: string;
+  defaultBoardId?: string;
+  allowedWorkspaceIds?: string[];
+}) {
   return new TrelloClient({
     apiKey: 'test-key',
     token: 'test-token',
     boardId: overrides?.boardId,
     defaultBoardId: overrides?.defaultBoardId,
+    allowedWorkspaceIds: overrides?.allowedWorkspaceIds,
   });
 }
 
@@ -65,6 +70,22 @@ describe('TrelloClient', () => {
           params: { key: 'test-key', token: 'test-token' },
         })
       );
+    });
+
+    it('should not enable workspace restrictions when allowed workspaces are unset or empty', () => {
+      expect(createClient().hasWorkspaceRestriction).toBe(false);
+      expect(createClient({ allowedWorkspaceIds: [] }).hasWorkspaceRestriction).toBe(false);
+    });
+  });
+
+  describe('workspace restriction', () => {
+    it('should reject access to a non-allowed workspace before making a request', async () => {
+      const client = createClient({ allowedWorkspaceIds: ['allowed-workspace'] });
+
+      await expect(client.listBoardsInWorkspace('blocked-workspace')).rejects.toThrow(
+        "Access to workspace 'blocked-workspace' is not allowed"
+      );
+      expect(mockAxiosInstance.get).not.toHaveBeenCalled();
     });
   });
 
@@ -254,6 +275,29 @@ describe('TrelloClient', () => {
     });
   });
 
+  describe('updateList', () => {
+    it('should update list metadata without position fields', async () => {
+      const list = { id: 'l1', name: 'Updated List' };
+      mockAxiosInstance.put.mockResolvedValue({ data: list });
+
+      const client = createClient();
+      const result = await client.updateList('l1', {
+        name: 'Updated List',
+        closed: false,
+        subscribed: true,
+        idBoard: 'b2',
+      });
+
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith('/lists/l1', {
+        name: 'Updated List',
+        closed: false,
+        subscribed: true,
+        idBoard: 'b2',
+      });
+      expect(result).toEqual(list);
+    });
+  });
+
   describe('getMyCards', () => {
     it('should fetch current user cards', async () => {
       mockAxiosInstance.get.mockResolvedValue({ data: [] });
@@ -426,6 +470,41 @@ describe('TrelloClient', () => {
       await client.deleteLabel('lbl1');
 
       expect(mockAxiosInstance.delete).toHaveBeenCalledWith('/labels/lbl1');
+    });
+  });
+
+  describe('custom fields', () => {
+    it('should set list custom fields using idValue', async () => {
+      const item = { id: 'item1', idCustomField: 'field1', idValue: 'option1' };
+      mockAxiosInstance.put.mockResolvedValue({ data: item });
+
+      const client = createClient();
+      const result = await client.updateCardCustomField('card1', 'field1', {
+        type: 'list',
+        value: 'option1',
+      });
+
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith(
+        '/cards/card1/customField/field1/item',
+        { idValue: 'option1' }
+      );
+      expect(result).toEqual(item);
+    });
+
+    it('should clear custom fields with value and idValue empty strings', async () => {
+      const item = { id: 'item1', idCustomField: 'field1', value: null };
+      mockAxiosInstance.put.mockResolvedValue({ data: item });
+
+      const client = createClient();
+      const result = await client.updateCardCustomField('card1', 'field1', {
+        type: 'clear',
+      });
+
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith(
+        '/cards/card1/customField/field1/item',
+        { value: '', idValue: '' }
+      );
+      expect(result).toEqual(item);
     });
   });
 

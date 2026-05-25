@@ -43,7 +43,10 @@ type TrelloRequestReturn =
   | string
   | boolean
   | TrelloList
-  | TrelloWorkspace;
+  | TrelloWorkspace
+  | TrelloCustomFieldDefinition
+  | TrelloCustomFieldOption
+  | TrelloCustomFieldItem;
 
 export class TrelloClient {
   private axiosInstance: AxiosInstance;
@@ -145,6 +148,35 @@ export class TrelloClient {
   }
 
   /**
+   * Check if workspace restriction is enabled
+   */
+  get hasWorkspaceRestriction(): boolean {
+    return this.config.allowedWorkspaceIds !== undefined && this.config.allowedWorkspaceIds.length > 0;
+  }
+
+  /**
+   * Check if a workspace ID is in the allowed list (or if no restriction is set)
+   */
+  isWorkspaceAllowed(workspaceId: string): boolean {
+    if (!this.hasWorkspaceRestriction) {
+      return true;
+    }
+    return this.config.allowedWorkspaceIds!.includes(workspaceId);
+  }
+
+  /**
+   * Validate workspace access, throwing an error if restricted
+   */
+  private validateWorkspaceAccess(workspaceId: string): void {
+    if (!this.isWorkspaceAllowed(workspaceId)) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        `Access to workspace '${workspaceId}' is not allowed. Allowed workspaces: ${this.config.allowedWorkspaceIds!.join(', ')}`
+      );
+    }
+  }
+
+  /**
    * Set the active board
    */
   async setActiveBoard(boardId: string): Promise<TrelloBoard> {
@@ -157,8 +189,12 @@ export class TrelloClient {
 
   /**
    * Set the active workspace
+   * Validates against allowedWorkspaceIds if configured
    */
   async setActiveWorkspace(workspaceId: string): Promise<TrelloWorkspace> {
+    // Validate workspace access before proceeding
+    this.validateWorkspaceAccess(workspaceId);
+
     // Verify the workspace exists
     const workspace = await this.getWorkspaceById(workspaceId);
     this.activeConfig.workspaceId = workspaceId;
@@ -194,11 +230,18 @@ export class TrelloClient {
 
   /**
    * List all boards the user has access to
+   * If allowedWorkspaceIds is configured, only returns boards from allowed workspaces
    */
   async listBoards(): Promise<TrelloBoard[]> {
     return this.handleRequest(async () => {
       const response = await this.axiosInstance.get('/members/me/boards');
-      return response.data;
+      const boards: TrelloBoard[] = response.data;
+
+      // Filter by allowed workspaces if restriction is enabled
+      if (this.hasWorkspaceRestriction) {
+        return boards.filter(board => board.idOrganization && this.isWorkspaceAllowed(board.idOrganization));
+      }
+      return boards;
     });
   }
 
@@ -214,11 +257,18 @@ export class TrelloClient {
 
   /**
    * List all workspaces the user has access to
+   * If allowedWorkspaceIds is configured, only returns workspaces in that list
    */
   async listWorkspaces(): Promise<TrelloWorkspace[]> {
     return this.handleRequest(async () => {
       const response = await this.axiosInstance.get('/members/me/organizations');
-      return response.data;
+      const workspaces: TrelloWorkspace[] = response.data;
+
+      // Filter by allowed workspaces if restriction is enabled
+      if (this.hasWorkspaceRestriction) {
+        return workspaces.filter(ws => this.isWorkspaceAllowed(ws.id));
+      }
+      return workspaces;
     });
   }
 
@@ -234,8 +284,12 @@ export class TrelloClient {
 
   /**
    * List boards in a specific workspace
+   * Validates against allowedWorkspaceIds if configured
    */
   async listBoardsInWorkspace(workspaceId: string): Promise<TrelloBoard[]> {
+    // Validate workspace access before proceeding
+    this.validateWorkspaceAccess(workspaceId);
+
     return this.handleRequest(async () => {
       const response = await this.axiosInstance.get(`/organizations/${workspaceId}/boards`);
       return response.data;
@@ -244,6 +298,7 @@ export class TrelloClient {
 
   /**
    * Create a new board
+   * Validates target workspace against allowedWorkspaceIds if configured
    */
   async createBoard(params: {
     name: string;
@@ -252,11 +307,25 @@ export class TrelloClient {
     defaultLabels?: boolean;
     defaultLists?: boolean;
   }): Promise<TrelloBoard> {
+    // Determine the target workspace
+    const targetWorkspace = params.idOrganization ?? this.activeConfig.workspaceId;
+
+    // When workspace restrictions are enabled, require a valid workspace
+    if (this.hasWorkspaceRestriction) {
+      if (!targetWorkspace) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `Workspace restrictions are enabled but no workspace was specified. Provide idOrganization or set an active workspace. Allowed workspaces: ${this.config.allowedWorkspaceIds!.join(', ')}`
+        );
+      }
+      this.validateWorkspaceAccess(targetWorkspace);
+    }
+
     return this.handleRequest(async () => {
       const response = await this.axiosInstance.post('/boards', {
         name: params.name,
         desc: params.desc,
-        idOrganization: params.idOrganization ?? this.activeConfig.workspaceId,
+        idOrganization: targetWorkspace,
         defaultLabels: params.defaultLabels,
         defaultLists: params.defaultLists,
       });
@@ -264,11 +333,21 @@ export class TrelloClient {
     });
   }
 
-  async getCardsByList(listId: string, fields?: string): Promise<TrelloCard[]> {
+  async getCardsByList(
+    listId: string,
+    fields?: string,
+    nameFilter?: string
+  ): Promise<TrelloCard[]> {
     return this.handleRequest(async () => {
       const params = fields ? { fields } : {};
       const response = await this.axiosInstance.get(`/lists/${listId}/cards`, { params });
-      return response.data;
+      let cards: TrelloCard[] = response.data;
+      const trimmed = nameFilter?.trim();
+      if (trimmed) {
+        const searchTerm = trimmed.toLowerCase();
+        cards = cards.filter((card) => card.name.toLowerCase().includes(searchTerm));
+      }
+      return cards;
     });
   }
 
@@ -339,6 +418,7 @@ export class TrelloClient {
       start?: string;
       dueComplete?: boolean;
       labels?: string[];
+      pos?: string | number;
     }
   ): Promise<TrelloCard> {
     return this.handleRequest(async () => {
@@ -349,6 +429,7 @@ export class TrelloClient {
         start: params.start,
         dueComplete: params.dueComplete,
         idLabels: params.labels,
+        pos: params.pos,
       });
       return response.data;
     });
@@ -363,12 +444,13 @@ export class TrelloClient {
     });
   }
 
-  async moveCard(boardId: string | undefined, cardId: string, listId: string): Promise<TrelloCard> {
+  async moveCard(boardId: string | undefined, cardId: string, listId: string, pos?: string | number): Promise<TrelloCard> {
     const effectiveBoardId = boardId || this.defaultBoardId;
     return this.handleRequest(async () => {
       const response = await this.axiosInstance.put(`/cards/${cardId}`, {
         idList: listId,
         ...(effectiveBoardId && { idBoard: effectiveBoardId }),
+        ...(pos !== undefined && { pos }),
       });
       return response.data;
     });
@@ -408,6 +490,21 @@ export class TrelloClient {
       const response = await this.axiosInstance.put(`/lists/${listId}/pos`, {
         value: position,
       });
+      return response.data;
+    });
+  }
+
+  async updateList(
+    listId: string,
+    params: {
+      name?: string;
+      closed?: boolean;
+      subscribed?: boolean;
+      idBoard?: string;
+    }
+  ): Promise<TrelloList> {
+    return this.handleRequest(async () => {
+      const response = await this.axiosInstance.put(`/lists/${listId}`, params);
       return response.data;
     });
   }
@@ -1247,6 +1344,64 @@ export class TrelloClient {
       }
     }
     return { created, errors };
+  }
+
+  // Custom field management methods
+  async getBoardCustomFields(boardId?: string): Promise<TrelloCustomFieldDefinition[]> {
+    const effectiveBoardId = boardId || this.activeConfig.boardId || this.defaultBoardId;
+    if (!effectiveBoardId) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        'boardId is required when no default board is configured'
+      );
+    }
+    return this.handleRequest(async () => {
+      const response = await this.axiosInstance.get(`/boards/${effectiveBoardId}/customFields`);
+      return response.data;
+    });
+  }
+
+  async getCustomFieldOptions(customFieldId: string): Promise<TrelloCustomFieldOption[]> {
+    return this.handleRequest(async () => {
+      const response = await this.axiosInstance.get(`/customFields/${customFieldId}/options`);
+      return response.data;
+    });
+  }
+
+  async updateCardCustomField(
+    cardId: string,
+    customFieldId: string,
+    params: {
+      type: 'text' | 'number' | 'checkbox' | 'date' | 'list' | 'clear';
+      value?: string;
+    }
+  ): Promise<TrelloCustomFieldItem> {
+    return this.handleRequest(async () => {
+      let body: Record<string, unknown>;
+
+      if (params.type === 'clear') {
+        body = { value: '', idValue: '' };
+      } else if (params.type === 'list') {
+        body = { idValue: params.value };
+      } else if (params.type === 'text') {
+        body = { value: { text: params.value } };
+      } else if (params.type === 'number') {
+        body = { value: { number: params.value } };
+      } else if (params.type === 'checkbox') {
+        body = { value: { checked: params.value } };
+      } else if (params.type === 'date') {
+        body = { value: { date: params.value } };
+      } else {
+        // Defensive: unreachable with current type union, guards against future additions
+        throw new McpError(ErrorCode.InvalidParams, `Unknown custom field type: ${params.type}`);
+      }
+
+      const response = await this.axiosInstance.put(
+        `/cards/${cardId}/customField/${customFieldId}/item`,
+        body
+      );
+      return response.data;
+    });
   }
 
   // Card history method

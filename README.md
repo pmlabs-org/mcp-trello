@@ -230,6 +230,29 @@ Starting with version 0.3.0, the MCP server supports multiple ways to work with 
 
 This allows you to work with multiple boards and workspaces without restarting the server.
 
+### Workspace Access Restriction
+
+You can optionally restrict MCP access to specific workspaces using the `TRELLO_ALLOWED_WORKSPACES` environment variable. This is useful for:
+
+- **Security**: Limiting AI agent access to only approved workspaces
+- **Multi-tenant setups**: Ensuring agents only access relevant workspaces
+- **Testing**: Isolating test environments from production data
+
+When `TRELLO_ALLOWED_WORKSPACES` is set:
+- `list_workspaces` only returns workspaces in the allowed list
+- `list_boards` only returns boards from allowed workspaces
+- `set_active_workspace` rejects workspaces not in the allowed list
+- `list_boards_in_workspace` rejects non-allowed workspace IDs
+- `create_board` rejects creation in non-allowed workspaces
+
+Example configuration:
+```bash
+# Only allow access to two specific workspaces
+TRELLO_ALLOWED_WORKSPACES=697c549ce04dc460af133a75,5f8a3b2c1d4e5f6a7b8c9d0e
+```
+
+If `TRELLO_ALLOWED_WORKSPACES` is not set or empty, all workspaces the token has access to will be available (default behaviour).
+
 #### Example Workflow
 
 1.  Start by listing available boards:
@@ -716,6 +739,51 @@ s; name: 'get_active_board_info',
   arguments: {}
 }
 ```
+
+### Custom Field Management Tools
+
+> **Note:** Custom fields require Trello Standard plan or higher.
+
+#### get\_board\_custom\_fields
+
+Get all custom field definitions on a board. For dropdown/list fields, also returns the available options with their IDs.
+
+```typescript
+{
+  name: 'get_board_custom_fields',
+  arguments: {
+    boardId?: string  // Optional: ID of the board (uses default if not provided)
+  }
+}
+```
+
+**Returns:** Array of custom field definitions including:
+- Field ID, name, type (`text`, `number`, `checkbox`, `date`, `list`)
+- For `list` type fields: available options with IDs (use these IDs when setting values)
+
+#### update\_card\_custom\_field
+
+Set or clear a custom field value on a card.
+
+```typescript
+{
+  name: 'update_card_custom_field',
+  arguments: {
+    cardId: string,       // ID of the card to update
+    customFieldId: string,// ID of the custom field definition
+    type: string,         // Field type: 'text' | 'number' | 'checkbox' | 'date' | 'list' | 'clear'
+    value?: string        // The value to set (not needed when type is 'clear')
+  }
+}
+```
+
+**Value format by type:**
+- `text`: any string
+- `number`: numeric string (e.g. `"42.5"`)
+- `checkbox`: `"true"` or `"false"`
+- `date`: ISO 8601 string (e.g. `"2025-12-31T00:00:00.000Z"`)
+- `list`: option ID from `get_board_custom_fields`
+- `clear`: omit value to remove the field value
 
 ## Integration Examples
 
