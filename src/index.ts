@@ -1414,32 +1414,6 @@ class TrelloServer {
       }
     );
 
-    // Custom field tools
-    this.server.registerTool(
-      'get_board_custom_fields',
-      {
-        title: 'Get Board Custom Fields',
-        description:
-          'List all custom field definitions on a board, including each fields id, name, type (text/number/date/checkbox/list), and options for dropdown fields',
-        inputSchema: {
-          boardId: z
-            .string()
-            .optional()
-            .describe('ID of the Trello board (uses default if not provided)'),
-        },
-      },
-      async ({ boardId }) => {
-        try {
-          const fields = await this.trelloClient.getBoardCustomFields(boardId);
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify(fields, null, 2) }],
-          };
-        } catch (error) {
-          return this.handleError(error);
-        }
-      }
-    );
-
     this.server.registerTool(
       'set_card_custom_field',
       {
