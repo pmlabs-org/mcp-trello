@@ -24,8 +24,8 @@ import { createTrelloRateLimiters } from './rate-limiter.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { createReadStream } from 'fs';
-import { fileURLToPath } from 'url';
+import * as attachments from './trello/attachments.js';
+import { validateExternalUrl } from './url-validator.js';
 
 // Path for storing active board/workspace configuration
 const CONFIG_DIR = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.trello-mcp');
@@ -202,27 +202,32 @@ export class TrelloClient {
     return workspace;
   }
 
+  private static readonly MAX_RETRY_ATTEMPTS = 3;
+
   private async handleRequest<T extends TrelloRequestReturn>(
-    requestFn: () => Promise<T>
+    requestFn: () => Promise<T>,
+    retryCount: number = 0
   ): Promise<T> {
     try {
       return await requestFn();
     } catch (error) {
       if (axios.isAxiosError(error)) {
-        if (error.response?.status === 429) {
-          // Rate limit exceeded, wait and retry
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          return this.handleRequest(requestFn);
+        if (error.response?.status === 429 && retryCount < TrelloClient.MAX_RETRY_ATTEMPTS) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+          return this.handleRequest(requestFn, retryCount + 1);
         }
-        // Trello API Error
-        // Customize error handling based on Trello's error structure if needed
+        if (error.response?.status === 429) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `Trello API rate limit exceeded after ${TrelloClient.MAX_RETRY_ATTEMPTS} retries`
+          );
+        }
         throw new McpError(
           ErrorCode.InternalError,
           `Trello API Error: ${error.response?.status} ${error.message}`,
           error.response?.data
         );
       } else {
-        // Unexpected Error
         throw new McpError(ErrorCode.InternalError, 'An unexpected error occurred');
       }
     }
@@ -522,8 +527,22 @@ export class TrelloClient {
     imageUrl: string,
     name?: string
   ): Promise<TrelloAttachment> {
-    // Simply delegate to attachFileToCard - it will auto-detect MIME type for images
-    return this.attachFileToCard(boardId, cardId, imageUrl, name || 'Image Attachment', undefined);
+    validateExternalUrl(imageUrl);
+    return this.handleRequest(() =>
+      attachments.attachImage(this.axiosInstance, { cardId, imageUrl, name })
+    );
+  }
+
+  async attachDataToCard(
+    boardId: string | undefined,
+    cardId: string,
+    data: string,
+    name?: string,
+    mimeType?: string
+  ): Promise<TrelloAttachment> {
+    return this.handleRequest(() =>
+      attachments.attachData(this.axiosInstance, { cardId, data, name, mimeType })
+    );
   }
 
   async attachImageDataToCard(
@@ -582,63 +601,12 @@ export class TrelloClient {
     name?: string,
     mimeType?: string
   ): Promise<TrelloAttachment> {
-    return this.handleRequest(async () => {
-      // Check if fileUrl is a local file path (starts with file://)
-      if (fileUrl.startsWith('file://')) {
-        // Handle local file upload
-        const localPath = fileURLToPath(fileUrl);
-        let effectiveMimeType = mimeType;
-        if (!effectiveMimeType) {
-          const ext = path.extname(localPath).toLowerCase();
-          effectiveMimeType = MIME_TYPES[ext] || 'application/octet-stream';
-        }
-
-        // Check if file exists
-        try {
-          await fs.access(localPath);
-        } catch (error) {
-          throw new McpError(ErrorCode.InvalidRequest, `File not found: ${localPath}`);
-        }
-
-        // Create form data for multipart upload
-        const form = new FormData();
-        const fileStream = createReadStream(localPath);
-        const fileName = name || path.basename(localPath);
-
-        form.append('file', fileStream, {
-          filename: fileName,
-          contentType: effectiveMimeType,
-        });
-
-        // Add name and mimeType to form
-        form.append('name', fileName);
-        form.append('mimeType', effectiveMimeType);
-
-        // Upload file directly to Trello using the configured axios instance
-        const response = await this.axiosInstance.post(`/cards/${cardId}/attachments`, form, {
-          headers: {
-            ...form.getHeaders(),
-          },
-        });
-
-        return response.data;
-      } else {
-        // Handle URL attachment
-        const remoteUrlPath = new URL(fileUrl).pathname;
-        let effectiveMimeType = mimeType;
-        if (!effectiveMimeType) {
-          const ext = path.extname(remoteUrlPath).toLowerCase();
-          effectiveMimeType = MIME_TYPES[ext] || 'application/octet-stream';
-        }
-
-        const response = await this.axiosInstance.post(`/cards/${cardId}/attachments`, {
-          url: fileUrl,
-          name: name || 'File Attachment',
-          mimeType: effectiveMimeType,
-        });
-        return response.data;
-      }
-    });
+    if (!fileUrl.startsWith('file://')) {
+      validateExternalUrl(fileUrl);
+    }
+    return this.handleRequest(() =>
+      attachments.attachFile(this.axiosInstance, { cardId, fileUrl, name, mimeType })
+    );
   }
 
   async getCard(
