@@ -1,0 +1,12 @@
+# .fork-sync-ignore — upstream commits fork-sync must skip.
+# One SHA per line, optional reason after whitespace.
+# Blank lines and # comments allowed.
+#
+# See CLAUDE.md in pmin-mcpinfrastructure for the full convention.
+
+# --- SSRF security fix (2026-06-07) ---
+# These commits were already cherry-picked into our fork in a prior sync
+# (as 34bac33 and 6efb3a0). The patches differ slightly so git --cherry-pick
+# doesn't detect equivalence — add here to prevent re-apply conflicts.
+66e5017  already applied as 34bac33 (fix(security): add retry limit on 429 and URL validation for SSRF protection)
+42ec5b3  already applied as 6efb3a0 (fix(security): address Gemini Code Assist review feedback)
