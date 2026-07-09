@@ -15,6 +15,10 @@ export default defineConfig({
       include: ['src/**/*.ts'],
       exclude: ['src/**/*.d.ts', 'src/evals/**'],
       reporter: ['text-summary', 'json-summary', 'html'],
+      // Baseline ratchet toward a 70% target. The floor starts at the current
+      // watermark so `main` stays green; `autoUpdate` raises these numbers as
+      // coverage improves (never lowers them), so CI fails any PR that drops
+      // coverage below the best we've ever achieved. Goal: climb all four to 70.
       thresholds: {
         autoUpdate: true,
         lines: 21.99,
