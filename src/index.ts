@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { z } from 'zod';
+import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+// The SDK types its schemas against zod/v4; importing bare 'zod' yields the v3 API,
+// which makes registerTool's inference explode (TS2589) and OOMs tsc.
+import { z } from 'zod/v4';
 import { TrelloClient } from './trello-client.js';
 import { TrelloHealthEndpoints, HealthEndpointSchemas } from './health/health-endpoints.js';
 import { formatCardListResponse } from './card-list-preview.js';
@@ -38,7 +41,7 @@ class TrelloServer {
 
     this.server = new McpServer({
       name: 'trello-server',
-      version: '1.7.1',
+      version: '1.8.0',
     });
 
     this.setupTools();
