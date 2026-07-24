@@ -1240,21 +1240,18 @@ export class TrelloClient {
   }
 
   async searchLabels(boardId: string | undefined, query: string): Promise<TrelloLabelDetails[]> {
-    const effectiveBoardId = boardId || this.activeConfig.boardId || this.defaultBoardId;
-    if (!effectiveBoardId) {
-      throw new McpError(
-        ErrorCode.InvalidParams,
-        'boardId is required when no default board is configured'
-      );
+    const labels = await this.getBoardLabels(boardId);
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return [];
     }
-    return this.handleRequest(async () => {
-      const response = await this.axiosInstance.get(`/boards/${effectiveBoardId}/labels`);
-      const labels: TrelloLabelDetails[] = response.data;
-      const q = query.toLowerCase();
-      return labels.filter(
-        (l) =>
-          (l.name || '').toLowerCase().includes(q) ||
-          (l.color || '').toLowerCase().includes(q)
+
+    return labels.filter(label => {
+      const normalizedName = label.name.toLowerCase();
+      const normalizedColor = label.color?.toLowerCase() ?? '';
+
+      return (
+        normalizedName.includes(normalizedQuery) || normalizedColor.includes(normalizedQuery)
       );
     });
   }
