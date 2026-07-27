@@ -1214,12 +1214,10 @@ export class TrelloClient {
   ): Promise<unknown> {
     const body: { value?: object | string; idValue?: string } = {};
     if (idValue !== undefined) {
-      // Dropdown/list field — use option id
       body.idValue = idValue;
     } else if (value !== undefined) {
       body.value = value;
     } else {
-      // Clear the field
       body.value = '';
     }
     const response = await this.axiosInstance.put(
@@ -1227,6 +1225,33 @@ export class TrelloClient {
       body
     );
     return response.data;
+  }
+
+  async searchLabels(boardId: string | undefined, query: string): Promise<TrelloLabelDetails[]> {
+    const effectiveBoardId = boardId || this.activeConfig.boardId || this.defaultBoardId;
+    if (!effectiveBoardId) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        'boardId is required when no default board is configured'
+      );
+    }
+    return this.handleRequest(async () => {
+      const response = await this.axiosInstance.get(`/boards/${effectiveBoardId}/labels`);
+      const labels: TrelloLabelDetails[] = response.data;
+      const q = query.toLowerCase();
+      return labels.filter(
+        (l) =>
+          (l.name || '').toLowerCase().includes(q) ||
+          (l.color || '').toLowerCase().includes(q)
+      );
+    });
+  }
+
+  async removeLabelFromCard(cardId: string, labelId: string): Promise<boolean> {
+    return this.handleRequest(async () => {
+      await this.axiosInstance.delete(`/cards/${cardId}/idLabels/${labelId}`);
+      return true;
+    });
   }
 
   /**
