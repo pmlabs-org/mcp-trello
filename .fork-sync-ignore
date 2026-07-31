@@ -15,3 +15,16 @@
 # Upstream 6a99ce4 adds search_labels and remove_label_from_card tools.
 # Already applied to our fork as f3b55b1 (cherry-pick with minor patch divergence).
 6a99ce4ebee255a072af99eb25f16e38031d3fb8  already applied as f3b55b1 (feat: add search_labels and remove_label_from_card tools)
+
+# --- mcp-trello: Release 1.8.0 (2026-07-31) ---
+# Applied manually as 44a01ae with conflict resolution — kept our custom-field
+# and search_labels tools alongside upstream's new watch/update tools.
+# Patch diverges from upstream so cherry-pick equivalence won't detect it.
+5806416  applied as 44a01ae (Release 1.8.0 with manual conflict resolution — custom-field tools preserved)
+
+# --- mcp-trello: wip pr-crusher dev snapshots (2026-07-31) ---
+# Three rotating dev-snapshot commits that only modify .pr-snapshot.md.
+# Upstream ultimately deletes the file in bf31af5 (applied as e289d8f).
+# No functional content — skip to avoid repeated .pr-snapshot.md conflicts.
+4a14ad3  wip dev snapshot — upstream deletes it in bf31af5 (already applied)
+db1ff93  wip dev snapshot — upstream deletes it in bf31af5 (already applied)
