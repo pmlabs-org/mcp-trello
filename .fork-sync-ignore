@@ -10,3 +10,8 @@
 # doesn't detect equivalence — add here to prevent re-apply conflicts.
 66e5017  already applied as 34bac33 (fix(security): add retry limit on 429 and URL validation for SSRF protection)
 42ec5b3  already applied as 6efb3a0 (fix(security): address Gemini Code Assist review feedback)
+
+# --- mcp-trello: search_labels + remove_label_from_card (2026-07-26) ---
+# Upstream 6a99ce4 adds search_labels and remove_label_from_card tools.
+# Already applied to our fork as f3b55b1 (cherry-pick with minor patch divergence).
+6a99ce4ebee255a072af99eb25f16e38031d3fb8  already applied as f3b55b1 (feat: add search_labels and remove_label_from_card tools)
