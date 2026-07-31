@@ -29,3 +29,4 @@
 4a14ad3  wip dev snapshot — upstream deletes it in bf31af5 (already applied)
 db1ff93  wip dev snapshot — upstream deletes it in bf31af5 (already applied)
 bf31af5  applied as e289d8f (git rm .pr-snapshot.md + cherry-pick --continue; patch diverges)
+6aef910  applied as 5d90d6f (ci: test+coverage gate; kept our functions threshold 32.77 vs upstream 32.66)
