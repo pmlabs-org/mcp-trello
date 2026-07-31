@@ -30,3 +30,9 @@
 db1ff93  wip dev snapshot — upstream deletes it in bf31af5 (already applied)
 bf31af5  applied as e289d8f (git rm .pr-snapshot.md + cherry-pick --continue; patch diverges)
 6aef910  applied as 5d90d6f (ci: test+coverage gate; kept our functions threshold 32.77 vs upstream 32.66)
+
+# --- mcp-trello: harden test and release (2026-07-31) ---
+# 41bc348 includes searchLabels refactoring to use getBoardLabels() helper.
+# Conflict resolution kept our custom-field methods AND took upstream's cleaner
+# searchLabels refactoring. Patch diverges from upstream. Applied as 1a6445e.
+41bc348  applied as 1a6445e (ci: harden test and release; searchLabels resolution diverges — took upstream getBoardLabels() refactor)
