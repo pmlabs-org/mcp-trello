@@ -28,3 +28,4 @@
 # No functional content — skip to avoid repeated .pr-snapshot.md conflicts.
 4a14ad3  wip dev snapshot — upstream deletes it in bf31af5 (already applied)
 db1ff93  wip dev snapshot — upstream deletes it in bf31af5 (already applied)
+bf31af5  applied as e289d8f (git rm .pr-snapshot.md + cherry-pick --continue; patch diverges)
