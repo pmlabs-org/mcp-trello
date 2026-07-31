@@ -36,3 +36,10 @@ bf31af5  applied as e289d8f (git rm .pr-snapshot.md + cherry-pick --continue; pa
 # Conflict resolution kept our custom-field methods AND took upstream's cleaner
 # searchLabels refactoring. Patch diverges from upstream. Applied as 1a6445e.
 41bc348  applied as 1a6445e (ci: harden test and release; searchLabels resolution diverges — took upstream getBoardLabels() refactor)
+
+# --- mcp-trello: Release 1.8.1 (2026-07-31) ---
+# All non-README changes were already present in our fork (no-op cherry-pick).
+# README.md conflict resolved by keeping HEAD (our hosted MCP Registry install
+# section, not the upstream npm/bunx quickstart).
+# Merge commit c3e1e92 auto-skipped as a merge commit; 2a6e2cf is the release SHA.
+2a6e2cf  no-op in fork — all changes already present; README kept HEAD (hosted deploy, not npm)
