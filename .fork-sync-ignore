@@ -70,3 +70,13 @@ f13c909  upstream CI only — Trusted Publishing (OIDC) for npm; drop NPM_TOKEN
 0b79e9f  upstream CI only — prerelease-aware release tooling + registry beta guard
 2407050  upstream CI only — make set-version prerelease group non-capturing
 5d120de  upstream agent-skill docs only — publish-auth failure mode; not our concern
+
+# --- mcp-trello: merge commits (auto-skipped but listed for audit hygiene) ---
+# Git merge commits can't be cherry-picked; fork-sync-ignore prevents audit noise.
+f098ffb  merge commit — PR #113 (set-version prerelease fix)
+1d0a800  merge commit — PR #112 (prerelease releases)
+c3e1e92  merge commit — PR #110 (release 1.8.1; release SHA 2a6e2cf already listed)
+c9781a2  merge commit — PR #91 (dueReminder; individual commits already in fork)
+2892406  merge commit — PR #88 (mcp-evals devDependency; pre-SSRF dev churn)
+bb18a7b  merge commit — PR #87 (pre-SSRF dev churn)
+d6327cb  merge commit — PR #89 (SSRF protection; applied as 66e5017/42ec5b3)
