@@ -15,13 +15,13 @@ class TrelloServer {
   private healthEndpoints: TrelloHealthEndpoints;
 
   constructor() {
-    const apiKey = process.env.TRELLO_API_KEY;
-    const token = process.env.TRELLO_TOKEN;
-    const defaultBoardId = process.env.TRELLO_BOARD_ID;
-    const allowedWorkspacesEnv = process.env.TRELLO_ALLOWED_WORKSPACES;
+    const apiKey = process.env.TRELLO_TRELLO_API_KEY;
+    const token = process.env.TRELLO_TRELLO_TOKEN;
+    const defaultBoardId = process.env.TRELLO_TRELLO_BOARD_ID;
+    const allowedWorkspacesEnv = process.env.TRELLO_TRELLO_ALLOWED_WORKSPACES;
 
     if (!apiKey || !token) {
-      throw new Error('TRELLO_API_KEY and TRELLO_TOKEN environment variables are required');
+      throw new Error('TRELLO_TRELLO_API_KEY and TRELLO_TRELLO_TOKEN environment variables are required');
     }
 
     // Parse allowed workspaces from comma-separated string
