@@ -954,3 +954,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
   - Built with the [Model Context Protocol SDK](https://github.com/modelcontextprotocol/typescript-sdk)
   - Uses the [Trello REST API](https://developer.atlassian.com/cloud/trello/rest/)
+
