@@ -2,7 +2,7 @@ FROM oven/bun:1-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache python3 make g++
 COPY package.json bun.lock ./
-RUN bun install --frozen
+RUN bun install --frozen-lockfile
 COPY . .
 RUN bun run build
 
@@ -12,7 +12,7 @@ COPY --from=builder /app/build ./build
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/bun.lock ./
 COPY --from=builder /app/server.js ./
-RUN bun install --production --frozen
+RUN bun install --production --frozen-lockfile
 RUN bun add express
 ENV NODE_ENV=production
 CMD ["bun", "server.js"]
