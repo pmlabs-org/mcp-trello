@@ -18,7 +18,18 @@ app.use(express.urlencoded({ extended: false }));
 
 // Sessions: sessionId -> { proc, pending: Map<id, resolver>, buffer, timer }
 const sessions = new Map();
-const SESSION_TTL = 30 * 60 * 1000;
+// Each session is a full `node build/index.js` child, so sessions are expensive.
+// Without a cap, a client retry storm spawned one child per `initialize` and
+// pinned a 2-core droplet (load avg 33, repeated OOM kills, 2026-11-23).
+//   SESSION_TTL      idle time before an established session's child is killed
+//   UNINIT_TTL       lifetime of a session that never sends a second request
+//                    (a client that timed out right after `initialize`)
+//   MAX_SESSIONS     hard cap on live children; extras get a fast 503
+//   EVICT_MIN_IDLE   a session idle at least this long may be evicted for a new one
+const SESSION_TTL = 10 * 60 * 1000;
+const UNINIT_TTL = 60 * 1000;
+const EVICT_MIN_IDLE = 30 * 1000;
+const MAX_SESSIONS = Math.max(1, parseInt(process.env.TRELLO_MCP_MAX_SESSIONS || '12', 10) || 12);
 
 // --- OAuth 2.0 PKCE routes ---
 app.get('/.well-known/oauth-protected-resource', (req, res) => {
@@ -103,7 +114,12 @@ function createSession(sessionId) {
     stdio: ['pipe', 'pipe', 'inherit'],
   });
 
-  const session = { proc, pending: new Map(), buffer: '', timer: null };
+  const session = { proc, pending: new Map(), buffer: '', timer: null, lastUsed: Date.now() };
+
+  // A failed spawn or a write to an already-dead child emits 'error' / EPIPE.
+  // Unhandled, either one takes down the whole proxy and every live session.
+  proc.on('error', () => endSession(sessionId, session, 'Process error'));
+  proc.stdin.on('error', () => {});
 
   proc.stdout.on('data', (chunk) => {
     session.buffer += chunk.toString();
@@ -124,28 +140,69 @@ function createSession(sessionId) {
     }
   });
 
-  proc.on('exit', () => {
-    sessions.delete(sessionId);
-    session.pending.forEach(resolve =>
-      resolve({ jsonrpc: '2.0', error: { code: -32603, message: 'Process exited' }, id: null })
-    );
-  });
+  proc.on('exit', () => endSession(sessionId, session, 'Process exited'));
 
-  resetTTL(sessionId, session);
+  // Short lifetime until the client proves it is real by sending a second request.
+  resetTTL(sessionId, session, UNINIT_TTL);
   sessions.set(sessionId, session);
   return session;
 }
 
-function resetTTL(sessionId, session) {
+// Single teardown path: stop the timer, drop the session, kill the child if it is
+// still running, and fail any requests still waiting on it. Safe to call twice.
+function endSession(sessionId, session, reason) {
   if (session.timer) clearTimeout(session.timer);
-  session.timer = setTimeout(() => {
-    session.proc.kill();
-    sessions.delete(sessionId);
-  }, SESSION_TTL);
+  session.timer = null;
+  if (sessions.get(sessionId) === session) sessions.delete(sessionId);
+  if (session.proc.exitCode === null && !session.proc.killed) {
+    try { session.proc.kill(); } catch { /* already gone */ }
+    // The cap counts table entries, so a child that ignores SIGTERM would keep its
+    // memory while its slot is reused. Escalate if it has not exited shortly after.
+    const proc = session.proc;
+    setTimeout(() => {
+      if (proc.exitCode === null && proc.signalCode === null) {
+        try { proc.kill('SIGKILL'); } catch { /* already gone */ }
+      }
+    }, 3000).unref();
+  }
+  session.pending.forEach(resolve =>
+    resolve({ jsonrpc: '2.0', error: { code: -32603, message: reason }, id: null })
+  );
+  session.pending.clear();
+}
+
+function resetTTL(sessionId, session, ms = SESSION_TTL) {
+  if (session.timer) clearTimeout(session.timer);
+  session.timer = setTimeout(() => endSession(sessionId, session, 'Session expired'), ms);
+}
+
+// Make room for one new session. Returns true if a slot is available.
+// Evicts the least-recently-used session, but only one that has been idle for at
+// least EVICT_MIN_IDLE: never kill a session mid-conversation to admit a newcomer.
+// A session with a request still in flight is never a candidate, however old its
+// lastUsed stamp is (a slow request can outlast EVICT_MIN_IDLE).
+function ensureCapacity() {
+  if (sessions.size < MAX_SESSIONS) return true;
+  let oldestId = null;
+  let oldest = null;
+  for (const [id, s] of sessions) {
+    if (s.pending.size > 0) continue;
+    if (!oldest || s.lastUsed < oldest.lastUsed) { oldestId = id; oldest = s; }
+  }
+  if (oldest && Date.now() - oldest.lastUsed >= EVICT_MIN_IDLE) {
+    console.log(`[SESSION] Evicting idle session ${oldestId} to admit a new one`);
+    endSession(oldestId, oldest, 'Session evicted');
+    return true;
+  }
+  return false;
 }
 
 function sendRequest(session, message) {
   return new Promise((resolve, reject) => {
+    if (session.proc.exitCode !== null || session.proc.killed) {
+      reject(new Error('Session process is not running'));
+      return;
+    }
     const id = message.id ?? randomUUID();
     const msg = { ...message, id };
     const timeout = setTimeout(() => {
@@ -169,9 +226,19 @@ app.post('/mcp', async (req, res) => {
   if (sessionId && sessions.has(sessionId)) {
     // Known active session — reuse.
     session = sessions.get(sessionId);
+    session.lastUsed = Date.now();
     resetTTL(sessionId, session);
   } else if (!sessionId && isInit) {
-    // Fresh initialize — spawn a new child.
+    // Fresh initialize — spawn a new child, unless we are at capacity. Reject fast
+    // with 503 + Retry-After so a retrying client backs off instead of piling on.
+    if (!ensureCapacity()) {
+      console.log(`[SESSION] At capacity (${sessions.size}/${MAX_SESSIONS}), rejecting initialize`);
+      return res.status(503).set('Retry-After', '5').json({
+        jsonrpc: '2.0',
+        error: { code: -32000, message: 'Server busy: too many active sessions, retry shortly' },
+        id: req.body?.id ?? null
+      });
+    }
     activeId = randomUUID();
     session = createSession(activeId);
     console.log(`[SESSION] New session ${activeId}`);
@@ -210,6 +277,16 @@ app.post('/mcp', async (req, res) => {
   }
 });
 
-app.get('/health', (_, res) => res.json({ status: 'ok', sessions: sessions.size }));
+// Client-initiated session end (MCP streamable HTTP). Idempotent: 204 whether or
+// not the session still exists, so a client cleaning up after an expiry is not
+// shown an error. Behind the same bearer-auth middleware as POST /mcp.
+app.delete('/mcp', (req, res) => {
+  const sessionId = req.headers['mcp-session-id'];
+  const session = sessionId ? sessions.get(sessionId) : undefined;
+  if (session) endSession(sessionId, session, 'Session closed by client');
+  res.status(204).end();
+});
+
+app.get('/health', (_, res) => res.json({ status: 'ok', sessions: sessions.size, max_sessions: MAX_SESSIONS }));
 
 app.listen(PORT, () => console.log(`Trello MCP proxy on :${PORT}`));
