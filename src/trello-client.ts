@@ -33,6 +33,8 @@ import { validateExternalUrl } from './url-validator.js';
 // Path for storing active board/workspace configuration
 const CONFIG_DIR = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.trello-mcp');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
+// Trello's maximum page size for GET /boards/{id}/labels (default is 50).
+const BOARD_LABELS_LIMIT = 1000;
 
 export class TrelloClient {
   private axiosInstance: AxiosInstance;
@@ -1324,7 +1326,11 @@ export class TrelloClient {
       );
     }
     return this.handleRequest(async () => {
-      const response = await this.axiosInstance.get(`/boards/${effectiveBoardId}/labels`);
+      // Trello returns only 50 labels unless a limit is passed (max 1000). Without it,
+      // search_labels reports "no match" on large boards and callers create duplicates.
+      const response = await this.axiosInstance.get(`/boards/${effectiveBoardId}/labels`, {
+        params: { limit: BOARD_LABELS_LIMIT },
+      });
       return response.data;
     });
   }

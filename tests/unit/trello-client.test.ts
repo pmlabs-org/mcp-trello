@@ -531,8 +531,24 @@ describe('TrelloClient', () => {
       await expect(client.searchLabels(undefined, 'BLUE')).resolves.toEqual([labels[1]]);
       await expect(client.searchLabels('b2', 'release')).resolves.toEqual([labels[0]]);
 
-      expect(mockAxiosInstance.get).toHaveBeenNthCalledWith(1, '/boards/b1/labels');
-      expect(mockAxiosInstance.get).toHaveBeenNthCalledWith(2, '/boards/b2/labels');
+      expect(mockAxiosInstance.get).toHaveBeenNthCalledWith(1, '/boards/b1/labels', {
+        params: { limit: 1000 },
+      });
+      expect(mockAxiosInstance.get).toHaveBeenNthCalledWith(2, '/boards/b2/labels', {
+        params: { limit: 1000 },
+      });
+    });
+
+    it('getBoardLabels should request up to 1000 labels, not Trello\'s default of 50', async () => {
+      const labels = Array.from({ length: 120 }, (_, i) => ({ id: `lbl${i}`, name: `L${i}`, color: 'red' }));
+      mockAxiosInstance.get.mockResolvedValue({ data: labels });
+
+      const client = createClient({ defaultBoardId: 'b1' });
+      await expect(client.getBoardLabels()).resolves.toHaveLength(120);
+      await expect(client.searchLabels(undefined, 'L119')).resolves.toEqual([labels[119]]);
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/boards/b1/labels', {
+        params: { limit: 1000 },
+      });
     });
 
     it('searchLabels should require a board', async () => {
@@ -548,7 +564,9 @@ describe('TrelloClient', () => {
       });
 
       await expect(createClient({ defaultBoardId: 'b1' }).searchLabels(undefined, '   ')).resolves.toEqual([]);
-      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/boards/b1/labels');
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/boards/b1/labels', {
+        params: { limit: 1000 },
+      });
     });
 
     it('removeLabelFromCard should delete the card-label association', async () => {
