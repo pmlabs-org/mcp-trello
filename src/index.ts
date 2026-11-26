@@ -7,7 +7,7 @@ import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod/v4';
 import { TrelloClient } from './trello-client.js';
 import { TrelloHealthEndpoints, HealthEndpointSchemas } from './health/health-endpoints.js';
-import { formatCardListResponse } from './card-list-preview.js';
+import { formatCardListResponse, appendNextPageNote } from './card-list-preview.js';
 
 class TrelloServer {
   private server: McpServer;
@@ -106,12 +106,122 @@ class TrelloServer {
             .describe(
               'Approximate response size threshold before descriptions are omitted. Defaults to 50000 bytes.'
             ),
+          filter: z
+            .enum(['open', 'closed', 'all'])
+            .optional()
+            .describe(
+              'Which cards to return: "open" (default, unchanged behaviour), "closed" (archived only) or "all". With closed or all, results come in pages (see limit and before) with a small default set of fields (id, idShort, name, idList, closed, dateLastActivity, idLabels).'
+            ),
+          limit: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe(
+              'Page size for filter closed/all (default 100, max 1000). Needed because Trello refuses to return a very large list in one go.'
+            ),
+          before: z
+            .string()
+            .optional()
+            .describe(
+              'Paging cursor for filter closed/all: the card id given in the previous page\'s "More cards available" note.'
+            ),
         },
       },
-      async ({ listId, fields, nameFilter, descMaxLength, omitDescThresholdBytes }) => {
+      async ({
+        listId,
+        fields,
+        nameFilter,
+        descMaxLength,
+        omitDescThresholdBytes,
+        filter,
+        limit,
+        before,
+      }) => {
         try {
-          const cards = await this.trelloClient.getCardsByList(listId, fields, nameFilter);
-          return formatCardListResponse(cards, { descMaxLength, omitDescThresholdBytes });
+          // Unchanged path: open cards only, no paging asked for.
+          if ((filter ?? 'open') === 'open' && limit === undefined && before === undefined) {
+            const cards = await this.trelloClient.getCardsByList(listId, fields, nameFilter);
+            return formatCardListResponse(cards, { descMaxLength, omitDescThresholdBytes });
+          }
+          const page = await this.trelloClient.getCardsByListFiltered(listId, {
+            fields,
+            nameFilter,
+            filter,
+            limit,
+            before,
+          });
+          return appendNextPageNote(
+            formatCardListResponse(page.cards, { descMaxLength, omitDescThresholdBytes }),
+            page.nextBefore,
+            ` and the same listId, filter and limit`
+          );
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
+    // Get cards from a whole board, including archived ones, one page at a time
+    this.server.registerTool(
+      'get_cards_by_board_id',
+      {
+        title: 'Get Cards by Board ID',
+        description:
+          'Fetch cards from a whole board, archived cards included, one page at a time. Each card carries closed (true = archived), idList (the list it sits in) and dateLastActivity. Pages are small by default (100 cards, fields id, idShort, name, idList, closed, dateLastActivity, idLabels; raise limit to 500 for scripts that read the whole board). After each page, if a "More cards available" note appears, call again with the before value it gives; stop at "End of results". Use get_lists with filter "all" to turn idList into list names, including archived lists.',
+        inputSchema: {
+          boardId: z
+            .string()
+            .optional()
+            .describe('ID of the Trello board (uses default if not provided)'),
+          filter: z
+            .enum(['open', 'closed', 'all'])
+            .optional()
+            .describe('Which cards to return: "all" (default), "open" or "closed" (archived only).'),
+          fields: z
+            .string()
+            .optional()
+            .describe(
+              'Comma-separated fields to return. Defaults to a small set; id and closed are always included. Use "desc" sparingly: it makes pages large.'
+            ),
+          limit: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe('Page size (default 100, max 500).'),
+          before: z
+            .string()
+            .optional()
+            .describe('Paging cursor: the card id given in the previous page\'s "More cards available" note.'),
+          nameFilter: z
+            .string()
+            .trim()
+            .min(1, 'nameFilter must not be empty')
+            .optional()
+            .describe('Optional substring to filter cards by name (case-insensitive), applied to each page.'),
+          descMaxLength: z
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .describe('Maximum description preview length per card when desc is requested. Defaults to 200.'),
+        },
+      },
+      async ({ boardId, filter, fields, limit, before, nameFilter, descMaxLength }) => {
+        try {
+          const page = await this.trelloClient.getBoardCards(boardId, {
+            fields,
+            nameFilter,
+            filter,
+            limit,
+            before,
+          });
+          return appendNextPageNote(
+            formatCardListResponse(page.cards, { descMaxLength }),
+            page.nextBefore,
+            ` and the same boardId, filter and limit`
+          );
         } catch (error) {
           return this.handleError(error);
         }
@@ -123,17 +233,25 @@ class TrelloServer {
       'get_lists',
       {
         title: 'Get Lists',
-        description: 'Retrieve all lists from the specified board',
+        description:
+          'Retrieve lists from the specified board. Open lists by default; set filter to "closed" (archived only) or "all" to include archived lists.',
         inputSchema: {
           boardId: z
             .string()
             .optional()
             .describe('ID of the Trello board (uses default if not provided)'),
+          filter: z
+            .enum(['open', 'closed', 'all'])
+            .optional()
+            .describe('Which lists to return: "open" (default), "closed" (archived only) or "all".'),
         },
       },
-      async ({ boardId }) => {
+      async ({ boardId, filter }) => {
         try {
-          const lists = await this.trelloClient.getLists(boardId);
+          const lists =
+            (filter ?? 'open') === 'open'
+              ? await this.trelloClient.getLists(boardId)
+              : await this.trelloClient.getListsFiltered(boardId, filter);
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(lists, null, 2) }],
           };

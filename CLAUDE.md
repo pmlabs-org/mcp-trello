@@ -14,6 +14,19 @@ Two MCP tools wrap Trello's custom field API:
 
 Discover field/option IDs once via `get_board_custom_fields` and cache them in your skill — Trello custom field IDs are stable.
 
+## Archived-aware reads (added 2026-11-26, card 30056)
+
+`get_lists`, `get_cards_by_list_id` and the new `get_cards_by_board_id` take `filter` = `open` | `closed` | `all`. `open` with no paging options is the original code path, unchanged. The new code lives in `trello-client.ts` as `getListsFiltered`, `getCardsByListFiltered`, `getBoardCards` (additive, so the weekly upstream sync should not conflict).
+
+Verified live against the WIP board (28k cards, 24.5k archived), things that are NOT obvious:
+
+- **Trello's own `closed` filter plus `limit` stops early** (an archived-only board read ended at 800 of ~24,500). We always read `/cards/all` and split open/closed ourselves.
+- **Page cursor = the OLDEST card id on the raw page** (`before=<id>`), not the last row: Trello does not return rows in id order, and using the last row gave 33,000 duplicate rows. A page shorter than `limit` is the last. The tool appends a "More cards available ... before=..." or "End of results" note.
+- **A whole huge list is refused** (`403 API_TOO_MANY_CARDS_REQUESTED`, the Completed list is ~22k cards), so list reads are always limited (default 100, max 1000). Board reads default 100, max 500 per page.
+- **Defaults are slim** (`id,idShort,name,idList,closed,dateLastActivity,idLabels`); `id` and `closed` are always requested. Returning every field for 240 cards was already ~560k characters.
+- A full board read is ~142 pages of 200, or ~57 pages of 500; measured 96 s at 200 per page (a 200-card page is ~78 KB, too big for a Claude chat, hence the default of 100). Do it once, then keep it current from `get_recent_activity` or by reading only open cards live.
+- After a deploy, reconnect the Trello MCP in claude.ai (Settings > Integrations) to pick up the new tool schema.
+
 ## Conventions
 
 - **handleRequest generic constraint**: `private async handleRequest<T extends TrelloRequestReturn>` constrains return types to a fixed union. New methods that return types not in the union (like the custom field methods) call `axiosInstance` directly, bypassing rate-limit retry. If you need 429 retry on a new method, extend the `TrelloRequestReturn` union in `trello-client.ts`.

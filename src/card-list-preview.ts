@@ -5,6 +5,29 @@ const DEFAULT_OMIT_DESC_THRESHOLD_BYTES = 50000;
 
 type TextContent = { type: 'text'; text: string };
 
+/**
+ * Add the "more cards available" note to a card-list response. Called only by the
+ * archived-aware reads; the original open-only response is never touched.
+ */
+export function appendNextPageNote(
+  response: { content: TextContent[] },
+  nextBefore: string | undefined,
+  hint: string
+): { content: TextContent[] } {
+  if (!nextBefore) {
+    response.content.push({
+      type: 'text',
+      text: 'End of results: this was the last page.',
+    });
+    return response;
+  }
+  response.content.push({
+    type: 'text',
+    text: `More cards available. Call again with before="${nextBefore}"${hint}. Keep going until you see "End of results".`,
+  });
+  return response;
+}
+
 export function formatCardListResponse(
   cards: TrelloCard[],
   options: {

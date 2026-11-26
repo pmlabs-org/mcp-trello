@@ -5,6 +5,8 @@ import {
   TrelloConfig,
   TrelloCard,
   TrelloList,
+  ArchiveFilter,
+  CardPage,
   TrelloAction,
   TrelloAttachment,
   TrelloBoard,
@@ -350,6 +352,175 @@ export class TrelloClient {
     return this.handleRequest(async () => {
       const response = await this.axiosInstance.get(`/boards/${effectiveBoardId}/lists`);
       return response.data;
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Archived-aware reads ("include archived"). Added as new methods so the
+  // existing open-only reads above stay exactly as they were.
+  //
+  // How paging works (verified live against the WIP board, 26 Nov 2026):
+  //  - Trello's own "closed" filter combined with `limit` stops early, so we always
+  //    read `/cards/all` and apply open/closed ourselves.
+  //  - Pages are cursored with `before=<card id>`. The cursor is the OLDEST card id
+  //    on the raw page (not the last row: Trello does not return rows in id order).
+  //  - A page shorter than `limit` is the last one.
+  //  - A whole list is refused by Trello when it is huge (403 API_TOO_MANY_CARDS_REQUESTED),
+  //    so list reads are always limited.
+  // ---------------------------------------------------------------------------
+
+  /** Small default so a big board read never strains the server or the caller. */
+  static readonly ARCHIVE_DEFAULT_FIELDS = 'id,idShort,name,idList,closed,dateLastActivity,idLabels';
+  static readonly LIST_PAGE_DEFAULT = 100;
+  static readonly LIST_PAGE_MAX = 1000;
+  static readonly BOARD_PAGE_DEFAULT = 100;
+  static readonly BOARD_PAGE_MAX = 500;
+  private static readonly CARD_ID_PATTERN = /^[0-9a-f]{24}$/i;
+
+  /** Keep `id` and `closed` in the request: paging and the open/closed split need them. */
+  private static archiveFields(fields: string | undefined): string {
+    const requested = (fields ?? TrelloClient.ARCHIVE_DEFAULT_FIELDS).trim();
+    if (requested === 'all') return requested;
+    const parts = requested.split(',').map((f) => f.trim()).filter(Boolean);
+    for (const needed of ['id', 'closed']) {
+      if (!parts.includes(needed)) parts.push(needed);
+    }
+    return parts.join(',');
+  }
+
+  private static pageSize(limit: number | undefined, fallback: number, max: number): number {
+    if (limit === undefined || !Number.isFinite(limit)) return fallback;
+    return Math.min(Math.max(Math.floor(limit), 1), max);
+  }
+
+  private static checkCursor(before: string | undefined): void {
+    if (before !== undefined && !TrelloClient.CARD_ID_PATTERN.test(before)) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        'before must be a card id (24 hex characters), as returned in the "More cards available" note'
+      );
+    }
+  }
+
+  /** Turn one raw page into a CardPage: next cursor from the raw rows, then filter. */
+  private static toCardPage(
+    rows: TrelloCard[],
+    filter: ArchiveFilter,
+    limit: number,
+    before: string | undefined,
+    nameFilter: string | undefined
+  ): CardPage {
+    let nextBefore: string | undefined;
+    if (rows.length > 0 && rows.length >= limit) {
+      nextBefore = rows.reduce((min, c) => (c.id < min ? c.id : min), rows[0].id);
+      if (nextBefore === before) {
+        throw new McpError(
+          ErrorCode.InternalError,
+          'Paging did not advance (a full page held no cards older than the cursor). Try a larger limit.'
+        );
+      }
+    }
+    let cards = rows;
+    if (filter === 'closed') cards = cards.filter((c) => c.closed);
+    else if (filter === 'open') cards = cards.filter((c) => !c.closed);
+    const trimmed = nameFilter?.trim();
+    if (trimmed) {
+      const term = trimmed.toLowerCase();
+      cards = cards.filter((c) => c.name.toLowerCase().includes(term));
+    }
+    return { cards, nextBefore };
+  }
+
+  /** Cards in one list, open / archived / both, one page at a time. */
+  async getCardsByListFiltered(
+    listId: string,
+    options: {
+      fields?: string;
+      nameFilter?: string;
+      filter?: ArchiveFilter;
+      limit?: number;
+      before?: string;
+    } = {}
+  ): Promise<CardPage> {
+    TrelloClient.checkCursor(options.before);
+    const filter = options.filter ?? 'open';
+    const limit = TrelloClient.pageSize(
+      options.limit,
+      TrelloClient.LIST_PAGE_DEFAULT,
+      TrelloClient.LIST_PAGE_MAX
+    );
+    const fields = TrelloClient.archiveFields(options.fields);
+    return this.handleRequest(async () => {
+      const response = await this.axiosInstance.get(`/lists/${listId}/cards/all`, {
+        params: { fields, limit, before: options.before },
+      });
+      return TrelloClient.toCardPage(
+        response.data as TrelloCard[],
+        filter,
+        limit,
+        options.before,
+        options.nameFilter
+      );
+    });
+  }
+
+  /** Cards on a whole board, open / archived / both, one page at a time. */
+  async getBoardCards(
+    boardId?: string,
+    options: {
+      fields?: string;
+      nameFilter?: string;
+      filter?: ArchiveFilter;
+      limit?: number;
+      before?: string;
+    } = {}
+  ): Promise<CardPage> {
+    const effectiveBoardId = boardId || this.activeConfig.boardId || this.defaultBoardId;
+    if (!effectiveBoardId) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        'boardId is required when no default board is configured'
+      );
+    }
+    TrelloClient.checkCursor(options.before);
+    const filter = options.filter ?? 'all';
+    const limit = TrelloClient.pageSize(
+      options.limit,
+      TrelloClient.BOARD_PAGE_DEFAULT,
+      TrelloClient.BOARD_PAGE_MAX
+    );
+    const fields = TrelloClient.archiveFields(options.fields);
+    return this.handleRequest(async () => {
+      const response = await this.axiosInstance.get(`/boards/${effectiveBoardId}/cards/all`, {
+        params: { fields, limit, before: options.before },
+      });
+      return TrelloClient.toCardPage(
+        response.data as TrelloCard[],
+        filter,
+        limit,
+        options.before,
+        options.nameFilter
+      );
+    });
+  }
+
+  /** Lists on a board, open / archived / both. A board has at most a few hundred lists, so no paging. */
+  async getListsFiltered(boardId?: string, filter: ArchiveFilter = 'open'): Promise<TrelloList[]> {
+    const effectiveBoardId = boardId || this.activeConfig.boardId || this.defaultBoardId;
+    if (!effectiveBoardId) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        'boardId is required when no default board is configured'
+      );
+    }
+    return this.handleRequest(async () => {
+      const response = await this.axiosInstance.get(`/boards/${effectiveBoardId}/lists`, {
+        params: { filter: 'all' },
+      });
+      const lists = response.data as TrelloList[];
+      if (filter === 'closed') return lists.filter((l) => l.closed);
+      if (filter === 'open') return lists.filter((l) => !l.closed);
+      return lists;
     });
   }
 
