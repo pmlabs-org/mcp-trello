@@ -47,6 +47,15 @@ export interface TrelloList {
   pos: number;
 }
 
+/** Which cards or lists a read returns: open only (the default), archived only, or both. */
+export type ArchiveFilter = 'open' | 'closed' | 'all';
+
+/** One page of cards. nextBefore is set when more cards may follow (pass it back as `before`). */
+export interface CardPage {
+  cards: TrelloCard[];
+  nextBefore?: string;
+}
+
 export interface TrelloAction {
   id: string;
   idMemberCreator: string;
