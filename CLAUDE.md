@@ -35,13 +35,14 @@ Verified live against the WIP board (28k cards, 24.5k archived), things that are
 
 ## Deploy
 
-Edit locally → push to `PM-Labs/mcp-trello@main` → on droplet:
+**Use `/pm.sub.ops.redeploy.mcp` for every change; do not follow ad-hoc steps.** It edits in an isolated worktree, holds the repo lock, and runs the review gate before the push.
 
-```bash
-ssh mcp-server "cd /opt/pmin-mcpinfrastructure/repos/mcp-trello && git pull --ff-only && \
-  cd /opt/pmin-mcpinfrastructure && bash scripts/check-repos-sync.sh trello && \
-  docker compose build trello && docker compose up -d trello"
-```
+**A push to `main` or to `upstream-sync-trial` is a live deploy** (both are in the workflow's `on.push.branches` and its deploy job). `.github/workflows/ci.yaml` builds `ghcr.io/pmlabs-org/mcp-trello`, tags the image it replaces as `:previous`, pushes `:latest` and `:<sha>`, then runs `docker compose pull trello && docker compose up -d --force-recreate trello` on the droplet (about 2 minutes). Docs-only pushes redeploy too. So:
+
+- Review before pushing, never after.
+- Never pull or `docker compose build` from the droplet's `repos/mcp-trello` checkout: it is not the running code and has been stale (25 ahead, 3 behind on 2026-11-26).
+- Confirm a deploy by the CI run for the commit plus the container's `CreatedAt` (`docker ps --filter name=pmin-mcpinfrastructure-trello-1`), not by the badge.
+- Roll back by reverting the commit through the same skill.
 
 Then reconnect the Trello MCP in claude.ai → Settings → Integrations to pick up new tool schemas.
 
